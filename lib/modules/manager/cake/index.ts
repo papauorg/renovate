@@ -3,13 +3,9 @@ import type { Category } from '../../../constants/index.ts';
 import { regEx } from '../../../util/regex.ts';
 import { isHttpUrl } from '../../../util/url.ts';
 import { NugetDatasource } from '../../datasource/nuget/index.ts';
-import type { Registry } from '../nuget/types.ts';
+import type { NugetPackageDependency, Registry } from '../nuget/types.ts';
 import { applyRegistries, getConfiguredRegistries } from '../nuget/util.ts';
-import type {
-  ExtractConfig,
-  PackageDependency,
-  PackageFileContent,
-} from '../types.ts';
+import type { ExtractConfig, PackageFileContent } from '../types.ts';
 
 export const url = 'https://cakebuild.net/docs';
 export const categories: Category[] = ['dotnet'];
@@ -39,7 +35,7 @@ const lexer = moo.states({
   },
 });
 
-function parseDependencyLine(line: string): PackageDependency | null {
+function parseDependencyLine(line: string): NugetPackageDependency | null {
   try {
     let url = line.replace(regEx(/^[^:]*:/), '');
     const isEmptyHost = url.startsWith('?');
@@ -53,9 +49,10 @@ function parseDependencyLine(line: string): PackageDependency | null {
     const depName = searchParams.get('package')!;
     const currentValue = searchParams.get('version') ?? undefined;
 
-    const result: PackageDependency = {
+    const result: NugetPackageDependency = {
       datasource: NugetDatasource.id,
       depName,
+      depType: 'nuget',
       currentValue,
     };
 
@@ -75,15 +72,14 @@ function parseDependencyLine(line: string): PackageDependency | null {
 
 function parseAndPushDependencyLine(
   registries: Registry[] | undefined,
-  deps: PackageDependency[],
+  deps: NugetPackageDependency[],
   value: string,
-): PackageDependency[] {
+): void {
   const dep = parseDependencyLine(value);
   if (dep) {
-    applyRegistries(dep as any, registries);
+    applyRegistries(dep, registries);
     deps.push(dep);
   }
-  return deps;
 }
 
 export async function extractPackageFile(
@@ -91,7 +87,7 @@ export async function extractPackageFile(
   packageFile: string,
   _config: ExtractConfig,
 ): Promise<PackageFileContent | null> {
-  let deps: PackageDependency[] = [];
+  const deps: NugetPackageDependency[] = [];
   const registries = await getConfiguredRegistries(packageFile);
 
   lexer.reset(content);
@@ -99,12 +95,12 @@ export async function extractPackageFile(
   while (token) {
     const { type, value } = token;
     if (type === 'dependency' || type === 'dependencyQuoted') {
-      deps = parseAndPushDependencyLine(registries, deps, value);
+      parseAndPushDependencyLine(registries, deps, value);
     } else if (type === 'dependencyFromInstallTools') {
       const matches = value.matchAll(regEx(/"dotnet:[^"]+"/g));
       for (const match of matches) {
         const withoutQuote = match.toString().slice(1, -1);
-        deps = parseAndPushDependencyLine(registries, deps, withoutQuote);
+        parseAndPushDependencyLine(registries, deps, withoutQuote);
       }
     }
     token = lexer.next();
